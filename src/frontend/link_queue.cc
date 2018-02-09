@@ -2,6 +2,11 @@
 
 #include <limits>
 #include <cassert>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #include "link_queue.hh"
 #include "timestamp.hh"
@@ -11,12 +16,13 @@
 
 using namespace std;
 
-LinkQueue::LinkQueue( const string & link_name, const string & filename, const string & logfile,
-                      const bool repeat, const bool graph_throughput, const bool graph_delay,
+LinkQueue::LinkQueue( const string & link_name, const string & filename,
+                      const string & logfile,
+                      const bool graph_throughput, const bool graph_delay,
                       unique_ptr<AbstractPacketQueue> && packet_queue,
                       const string & command_line )
-    : next_delivery_( 0 ),
-      schedule_(),
+    : fd_( 0 ),
+      packets_per_second_( nullptr, [](uint64_t *p) { if (p) munmap(p, sizeof(uint64_t)); } ),
       base_timestamp_( timestamp() ),
       packet_queue_( move( packet_queue ) ),
       packet_in_transit_( "", 0 ),
@@ -25,43 +31,21 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename, const s
       log_(),
       throughput_graph_( nullptr ),
       delay_graph_( nullptr ),
-      repeat_( repeat ),
       finished_( false )
 {
     assert_not_root();
 
-    /* open filename and load schedule */
-    ifstream trace_file( filename );
-
-    if ( not trace_file.good() ) {
-        throw runtime_error( filename + ": error opening for reading" );
+    fd_ = open( filename.c_str(), O_RDONLY );
+    if ( fd_ == -1 ) {
+    	  throw runtime_error( "Error opening file for reading" );
     }
 
-    string line;
-
-    while ( trace_file.good() and getline( trace_file, line ) ) {
-        if ( line.empty() ) {
-            throw runtime_error( filename + ": invalid empty line" );
-        }
-
-        const uint64_t ms = myatoi( line );
-
-        if ( not schedule_.empty() ) {
-            if ( ms < schedule_.back() ) {
-                throw runtime_error( filename + ": timestamps must be monotonically nondecreasing" );
-            }
-        }
-
-        schedule_.emplace_back( ms );
+    void *pps = mmap( 0, sizeof(uint64_t), PROT_READ, MAP_SHARED, fd_, 0 );
+    if ( pps == MAP_FAILED ) {
+        close( fd_ );
+        throw runtime_error( "Error mmapping the file" );
     }
-
-    if ( schedule_.empty() ) {
-        throw runtime_error( filename + ": no valid timestamps found" );
-    }
-
-    if ( schedule_.back() == 0 ) {
-        throw runtime_error( filename + ": trace must last for a nonzero amount of time" );
-    }
+    packets_per_second_.reset( (uint64_t *) pps );
 
     /* open logfile if called for */
     if ( not logfile.empty() ) {
@@ -87,7 +71,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename, const s
                                                       { make_tuple( 1.0, 0.0, 0.0, 0.25, true ),
                                                         make_tuple( 0.0, 0.0, 0.4, 1.0, false ),
                                                         make_tuple( 1.0, 0.0, 0.0, 0.5, false ) },
-                                                      "throughput (Mbps)",
+                                                      "throughput (Mbps_)",
                                                       8.0 / 1000000.0,
                                                       true,
                                                       500,
@@ -126,7 +110,7 @@ void LinkQueue::record_departure_opportunity( void )
     /* meter the delivery opportunity */
     if ( throughput_graph_ ) {
         throughput_graph_->add_value_now( 0, PACKET_SIZE );
-    }    
+    }
 }
 
 void LinkQueue::record_departure( const uint64_t departure_time, const QueuedPacket & packet )
@@ -144,7 +128,7 @@ void LinkQueue::record_departure( const uint64_t departure_time, const QueuedPac
 
     if ( delay_graph_ ) {
         delay_graph_->set_max_value_now( 0, departure_time - packet.arrival_time );
-    }    
+    }
 }
 
 void LinkQueue::read_packet( const string & contents )
@@ -158,6 +142,7 @@ void LinkQueue::read_packet( const string & contents )
     rationalize( now );
 
     record_arrival( now, contents.size());
+
     packet_queue_->enqueue( QueuedPacket( contents, now ) );
 }
 
@@ -166,24 +151,16 @@ uint64_t LinkQueue::next_delivery_time( void ) const
     if ( finished_ ) {
         return -1;
     } else {
-        return schedule_.at( next_delivery_ ) + base_timestamp_;
+        /* FIXME: this approach will have problems if the interval is
+         * <1ms, such as when the rate exceeds 12Mbps_. */
+        uint64_t scheduling_interval = 1000 / *packets_per_second_;
+        return scheduling_interval + base_timestamp_;
     }
 }
 
 void LinkQueue::use_a_delivery_opportunity( void )
 {
     record_departure_opportunity();
-
-    next_delivery_ = (next_delivery_ + 1) % schedule_.size();
-
-    /* wraparound */
-    if ( next_delivery_ == 0 ) {
-        if ( repeat_ ) {
-            base_timestamp_ += schedule_.back();
-        } else {
-            finished_ = true;
-        }
-    }
 }
 
 /* emulate the link up to the given timestamp */
