@@ -22,7 +22,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
                       unique_ptr<AbstractPacketQueue> && packet_queue,
                       const string & command_line )
     : fd_( 0 ),
-      scheduling_interval_( nullptr, [](uint64_t *p) { if (p) munmap(p, sizeof(uint64_t)); } ),
+      control_file_( nullptr, [](uint64_t *p) { if (p) munmap(p, sizeof(uint64_t)); } ),
       base_timestamp_( timestamp() ),
       packet_queue_( move( packet_queue ) ),
       packet_in_transit_( "", 0 ),
@@ -40,12 +40,12 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
     	  throw runtime_error( "Error opening file for reading" );
     }
 
-    void *pps = mmap( 0, sizeof(uint64_t), PROT_READ, MAP_SHARED, fd_, 0 );
+    void *pps = mmap( 0, 2 * sizeof(uint64_t), PROT_READ, MAP_SHARED, fd_, 0 );
     if ( pps == MAP_FAILED ) {
         close( fd_ );
         throw runtime_error( "Error mmapping the file" );
     }
-    scheduling_interval_.reset( (uint64_t *) pps );
+    control_file_.reset( (uint64_t *) pps );
 
     /* open logfile if called for */
     if ( not logfile.empty() ) {
@@ -143,7 +143,10 @@ void LinkQueue::read_packet( const string & contents )
 
     record_arrival( now, contents.size());
 
-    packet_queue_->enqueue( QueuedPacket( contents, now ) );
+    uint64_t link_on = control_file_[1];
+    if ( link_on == 1 ) {
+        packet_queue_->enqueue( QueuedPacket( contents, now ) );
+    }
 }
 
 uint64_t LinkQueue::next_delivery_time( void ) const
@@ -154,7 +157,7 @@ uint64_t LinkQueue::next_delivery_time( void ) const
         /* FIXME: this approach will have problems if the interval is
          * <1ms, such as when the rate exceeds 12Mbps_. */
         const uint64_t now = timestamp();
-        const uint64_t interval = *scheduling_interval_;
+        const uint64_t interval = control_file_[0];
         if ( interval == 0 ) {
             throw runtime_error( "scheduling interval cannot be 0" );
         }

@@ -19,7 +19,7 @@ private:
     const static unsigned int PACKET_SIZE = 1504; /* default max TUN payload size */
 
     int fd_;
-    std::unique_ptr<uint64_t, void(*)(uint64_t*)> scheduling_interval_;
+    std::unique_ptr<uint64_t[], void(*)(uint64_t*)> control_file_;
 
     uint64_t base_timestamp_;
 

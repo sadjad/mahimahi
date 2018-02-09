@@ -50,9 +50,10 @@ def main(args):
     curr_interval = min_scheduling_interval
 
     with open(control_file, 'wb+') as f:
-        f.write(bytes([0] * SIZEOF_UINT64_T))
+        mmap_len = 2 * SIZEOF_UINT64_T
+        f.write(bytes([0] * mmap_len))
         f.flush()
-        mm = mmap.mmap(f.fileno(), SIZEOF_UINT64_T, prot=mmap.PROT_WRITE)
+        mm = mmap.mmap(f.fileno(), mmap_len, prot=mmap.PROT_WRITE)
 
         window = curses.initscr()
         window.keypad(True)
@@ -60,12 +61,14 @@ def main(args):
         curses.noecho()
         curses.cbreak()
 
-        def write_interval_to_mm_region(interval):
+        def write_to_mm_region(interval, link_on):
+            # The first uint64_t is the packet interval and the second is
+            # whether the link is running
             mm.seek(0)
-            mm.write(struct.pack('=Q', interval))
+            mm.write(struct.pack('=QQ', interval, 1 if link_on else 0))
             os.fsync(f.fileno())
 
-        def refresh_window(interval):
+        def refresh_window(interval, link_on):
             pps = scheduling_interval_to_pps(interval)
             mbps = pps_to_mbps(pps)
             window.clear()
@@ -73,19 +76,20 @@ def main(args):
             window.addstr(1, 0, 'Max bandwidth: {:.3f} Mbps'.format(max_mbps))
             window.addstr(2, 0, 'Current bandwidth: {:.3f} Mbps'.format(mbps))
             window.addstr(3, 0, 'Packets per second: {:.2f}'.format(pps))
-            window.addstr(4, 0,
-                          'Scheduling interval: {} ms'.format(interval))
+            window.addstr(4, 0, 'Scheduling interval: {} ms'.format(interval))
+            window.addstr(5, 0, 'Link status: {}'.format(
+                          'running' if link_on else 'dead'))
             window.refresh()
 
-        write_interval_to_mm_region(curr_interval)
-        refresh_window(curr_interval)
+        write_to_mm_region(curr_interval, True)
+        refresh_window(curr_interval, True)
 
         # Wait for command by user
         while True:
             k = window.getch()
             if k == ord('\n') or k == curses.KEY_ENTER:
-                write_interval_to_mm_region(OUTAGE_LENGTH_IN_MS)
-                refresh_window(OUTAGE_LENGTH_IN_MS)
+                write_to_mm_region(curr_interval, False)
+                refresh_window(curr_interval, False)
                 curses.beep()
                 time.sleep(OUTAGE_LENGTH_IN_MS / 1000.0)
             elif k == curses.KEY_DOWN:
@@ -97,8 +101,8 @@ def main(args):
                 continue
 
             # Update the display
-            write_interval_to_mm_region(curr_interval)
-            refresh_window(curr_interval)
+            write_to_mm_region(curr_interval, True)
+            refresh_window(curr_interval, True)
 
 
 if __name__ == '__main__':
