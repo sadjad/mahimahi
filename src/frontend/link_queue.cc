@@ -22,7 +22,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
                       unique_ptr<AbstractPacketQueue> && packet_queue,
                       const string & command_line )
     : fd_( 0 ),
-      packets_per_second_( nullptr, [](uint64_t *p) { if (p) munmap(p, sizeof(uint64_t)); } ),
+      scheduling_interval_( nullptr, [](uint64_t *p) { if (p) munmap(p, sizeof(uint64_t)); } ),
       base_timestamp_( timestamp() ),
       packet_queue_( move( packet_queue ) ),
       packet_in_transit_( "", 0 ),
@@ -45,7 +45,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
         close( fd_ );
         throw runtime_error( "Error mmapping the file" );
     }
-    packets_per_second_.reset( (uint64_t *) pps );
+    scheduling_interval_.reset( (uint64_t *) pps );
 
     /* open logfile if called for */
     if ( not logfile.empty() ) {
@@ -71,7 +71,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
                                                       { make_tuple( 1.0, 0.0, 0.0, 0.25, true ),
                                                         make_tuple( 0.0, 0.0, 0.4, 1.0, false ),
                                                         make_tuple( 1.0, 0.0, 0.0, 0.5, false ) },
-                                                      "throughput (Mbps_)",
+                                                      "throughput (Mbps)",
                                                       8.0 / 1000000.0,
                                                       true,
                                                       500,
@@ -153,14 +153,21 @@ uint64_t LinkQueue::next_delivery_time( void ) const
     } else {
         /* FIXME: this approach will have problems if the interval is
          * <1ms, such as when the rate exceeds 12Mbps_. */
-        uint64_t scheduling_interval = 1000 / *packets_per_second_;
-        return scheduling_interval + base_timestamp_;
+        const uint64_t now = timestamp();
+        const uint64_t interval = *scheduling_interval_;
+        if ( interval == 0 ) {
+            throw runtime_error( "scheduling interval cannot be 0" );
+        }
+        const uint64_t scheduled_time = interval + base_timestamp_;
+        return ( scheduled_time > now ) ? scheduled_time : now;
     }
 }
 
-void LinkQueue::use_a_delivery_opportunity( void )
+void LinkQueue::use_a_delivery_opportunity( uint64_t delivery_time )
 {
     record_departure_opportunity();
+
+    base_timestamp_ = delivery_time;
 }
 
 /* emulate the link up to the given timestamp */
@@ -173,7 +180,7 @@ void LinkQueue::rationalize( const uint64_t now )
 
         /* burn a delivery opportunity */
         unsigned int bytes_left_in_this_delivery = PACKET_SIZE;
-        use_a_delivery_opportunity();
+        use_a_delivery_opportunity(this_delivery_time);
 
         while ( bytes_left_in_this_delivery > 0 ) {
             if ( not packet_in_transit_bytes_left_ ) {

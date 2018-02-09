@@ -19,7 +19,7 @@ private:
     const static unsigned int PACKET_SIZE = 1504; /* default max TUN payload size */
 
     int fd_;
-    std::unique_ptr<uint64_t, void(*)(uint64_t*)> packets_per_second_;
+    std::unique_ptr<uint64_t, void(*)(uint64_t*)> scheduling_interval_;
 
     uint64_t base_timestamp_;
 
@@ -36,7 +36,7 @@ private:
 
     uint64_t next_delivery_time( void ) const;
 
-    void use_a_delivery_opportunity( void );
+    void use_a_delivery_opportunity( const uint64_t delivery_time );
 
     void record_arrival( const uint64_t arrival_time, const size_t pkt_size );
     void record_departure_opportunity( void );
