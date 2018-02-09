@@ -70,11 +70,11 @@ def main(args):
             mbps = pps_to_mbps(pps)
             window.clear()
             window.addstr(0, 0, 'Control mode: {}'.format(mode))
-            window.addstr(1, 0, 'Max bandwidth: {:6.3f} Mbps'.format(max_mbps))
-            window.addstr(2, 0, 'Current bandwidth: {:6.3f} Mbps'.format(mbps))
-            window.addstr(3, 0, 'Packets per second: {:3.2f}'.format(pps))
+            window.addstr(1, 0, 'Max bandwidth: {:.3f} Mbps'.format(max_mbps))
+            window.addstr(2, 0, 'Current bandwidth: {:.3f} Mbps'.format(mbps))
+            window.addstr(3, 0, 'Packets per second: {:.2f}'.format(pps))
             window.addstr(4, 0,
-                          'Scheduling interval: {:4d} ms'.format(interval))
+                          'Scheduling interval: {} ms'.format(interval))
             window.refresh()
 
         write_interval_to_mm_region(curr_interval)
