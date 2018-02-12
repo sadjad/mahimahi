@@ -6,11 +6,26 @@ import mmap
 import struct
 import curses
 import os
+import rtmidi
+from collections import namedtuple
 
 
 SIZEOF_UINT64_T = 8
 PACKET_SIZE = 1504
 OUTAGE_LENGTH_IN_MS = 1000
+
+# 1000 packets per second
+MAX_BW_MBPS = float(1000 * PACKET_SIZE * 8) / (10 ** 6)
+
+# 1 packet per second
+MIN_BW_MBPS = float(PACKET_SIZE * 8) / (10 ** 6)
+
+DEFAULT_MIDI_CTRL_BW_SLIDER = 81
+DEFAULT_MIDI_CTRL_DROP_BUTTON = 73
+MIDI_CTRL_SLIDER_MAX = 127
+
+
+AppConfig = namedtuple('AppConfig', ['window', 'midi_port', 'mm', 'f'])
 
 
 def get_args():
@@ -18,36 +33,78 @@ def get_args():
     parser.add_argument('-f', '--file', type=str,
                         default='/tmp/mm-interactive',
                         help='Path to mmap control file to')
-    parser.add_argument('-m', '--mode', type=str, default='keyboard',
-                        choices=['keyboard', 'midi'],
-                        help='Source of user interaction')
-    parser.add_argument('--interval', type=int, default=1,
-                        help='Min interval between packets in ms')
+    parser.add_argument('-m', '--midi-port', type=int,
+                        help='Midi port of the device to use')
+    parser.add_argument('--midi-ctrl-bw', type=int,
+                        default=DEFAULT_MIDI_CTRL_BW_SLIDER,
+                        help='Midi controller number for bandwidth')
+    parser.add_argument('--midi-ctrl-drop', type=int,
+                        default=DEFAULT_MIDI_CTRL_DROP_BUTTON,
+                        help='Midi controller number for drops')
     return parser.parse_args()
 
 
-def pps_to_mbps(pps):
-    return pps * PACKET_SIZE * 8 / 10 ** 6
+def mbps_to_pps(mbps):
+    return mbps * (10 ** 6) / (8 * PACKET_SIZE)
 
 
-def scheduling_interval_to_pps(interval):
-    return 1000 / float(interval)
+def print_midi_message(midi):
+    if midi.isNoteOn():
+        print('on: ', midi.getMidiNoteName(midi.getNoteNumber()),
+              midi.getVelocity())
+    elif midi.isNoteOff():
+        print('off:', midi.getMidiNoteName(midi.getNoteNumber()))
+    elif midi.isController():
+        print('controller', midi.getControllerNumber(),
+              midi.getControllerValue())
+
+
+def refresh_window(conf, mbps, link_on):
+    pps = mbps_to_pps(mbps)
+    conf.window.clear()
+
+    line_count = 0
+
+    def addstr(line):
+        nonlocal line_count
+        conf.window.addstr(line_count, 0, line)
+        line_count += 1
+
+    if conf.midi_port is None:
+        addstr('Control MahiMahi with the UP/DOWN/ENTER keys')
+    else:
+        addstr('Control MahiMahi with midi port {}'.format(conf.midi_port))
+    addstr('Max bandwidth: {:.3f} Mbps'.format(MAX_BW_MBPS))
+    addstr('Min bandwidth: {:.3f} Mbps'.format(MIN_BW_MBPS))
+    addstr('Current bandwidth: {:.3f} Mbps'.format(mbps))
+    addstr('Packets per second: {:.2f}'.format(pps))
+    addstr('Link status: {}'.format('running' if link_on else 'dead'))
+    conf.window.refresh()
+
+
+def write_to_mm_region(conf, mbps, link_on):
+    # The first uint64_t is the bps and the second is
+    # whether the link is running
+    bps = int(mbps * (10 ** 6))
+    conf.mm.seek(0)
+    conf.mm.write(struct.pack('=QQ', bps, 1 if link_on else 0))
+    os.fsync(conf.f.fileno())
+
+
+def cause_temporary_outage(conf, mbps):
+    write_to_mm_region(conf, mbps, False)
+    refresh_window(conf, mbps, False)
+    curses.beep()
+    time.sleep(OUTAGE_LENGTH_IN_MS / 1000.0)
 
 
 def main(args):
-    mode = args.mode
-    if mode == 'midi':
-        raise Exception('midi not supported yet')
-
     control_file = args.file
+    midi_port = args.midi_port
+    midi_ctrl_bw = args.midi_ctrl_bw
+    midi_ctrl_drop = args.midi_ctrl_drop
 
-    min_scheduling_interval = args.interval
-    if min_scheduling_interval < 1:
-        raise Exception('Sceduling interval cannot be less than 1')
-    if min_scheduling_interval >= OUTAGE_LENGTH_IN_MS:
-        raise Exception('Sceduling interval cannot exceed link drop length')
-    max_mbps = pps_to_mbps(scheduling_interval_to_pps(min_scheduling_interval))
-    curr_interval = min_scheduling_interval
+    curr_bw = MAX_BW_MBPS
 
     with open(control_file, 'wb+') as f:
         mmap_len = 2 * SIZEOF_UINT64_T
@@ -61,48 +118,61 @@ def main(args):
         curses.noecho()
         curses.cbreak()
 
-        def write_to_mm_region(interval, link_on):
-            # The first uint64_t is the packet interval and the second is
-            # whether the link is running
-            mm.seek(0)
-            mm.write(struct.pack('=QQ', interval, 1 if link_on else 0))
-            os.fsync(f.fileno())
+        conf = AppConfig(window=window, midi_port=midi_port, mm=mm, f=f)
 
-        def refresh_window(interval, link_on):
-            pps = scheduling_interval_to_pps(interval)
-            mbps = pps_to_mbps(pps)
-            window.clear()
-            window.addstr(0, 0, 'Control mode: {}'.format(mode))
-            window.addstr(1, 0, 'Max bandwidth: {:.3f} Mbps'.format(max_mbps))
-            window.addstr(2, 0, 'Current bandwidth: {:.3f} Mbps'.format(mbps))
-            window.addstr(3, 0, 'Packets per second: {:.2f}'.format(pps))
-            window.addstr(4, 0, 'Scheduling interval: {} ms'.format(interval))
-            window.addstr(5, 0, 'Link status: {}'.format(
-                          'running' if link_on else 'dead'))
-            window.refresh()
+        write_to_mm_region(conf, curr_bw, True)
+        refresh_window(conf, curr_bw, True)
 
-        write_to_mm_region(curr_interval, True)
-        refresh_window(curr_interval, True)
+        def keyboard_loop(conf):
+            nonlocal curr_bw
+            while True:
+                k = window.getch()
+                if k == ord('\n') or k == curses.KEY_ENTER:
+                    cause_temporary_outage(conf, curr_bw)
+                elif k == curses.KEY_UP:
+                    curr_bw = min(curr_bw + 0.1, MAX_BW_MBPS)
+                elif k == curses.KEY_DOWN:
+                    curr_bw = max(MIN_BW_MBPS, curr_bw - 1)
+                else:
+                    # Ignored input
+                    continue
 
-        # Wait for command by user
-        while True:
-            k = window.getch()
-            if k == ord('\n') or k == curses.KEY_ENTER:
-                write_to_mm_region(curr_interval, False)
-                refresh_window(curr_interval, False)
-                curses.beep()
-                time.sleep(OUTAGE_LENGTH_IN_MS / 1000.0)
-            elif k == curses.KEY_DOWN:
-                curr_interval = min(curr_interval + 1, OUTAGE_LENGTH_IN_MS)
-            elif k == curses.KEY_UP:
-                curr_interval = max(1, curr_interval - 1)
-            else:
-                # Ignored input
-                continue
+                # Update the display
+                write_to_mm_region(conf, curr_bw, True)
+                refresh_window(conf, curr_bw, True)
 
-            # Update the display
-            write_to_mm_region(curr_interval, True)
-            refresh_window(curr_interval, True)
+        def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop):
+            nonlocal curr_bw
+            midiin = rtmidi.RtMidiIn()
+            midiin.openPort(conf.midi_port)
+
+            while True:
+                m = midiin.getMessage(250)
+                if not m:
+                    continue
+
+                # print_midi_message(m)
+                if not m.isController():
+                    continue
+
+                ctrl_no = m.getControllerNumber()
+                if ctrl_no == midi_ctrl_bw:
+                    slider_val = m.getControllerValue()
+                    assert(slider_val >= 0)
+                    new_bw = (slider_val + 1) * 0.1
+                    new_bw = min(MAX_BW_MBPS, new_bw)
+                    new_bw = max(MIN_BW_MBPS, new_bw)
+                    curr_bw = new_bw
+                elif ctrl_no == midi_ctrl_drop:
+                    cause_temporary_outage(conf, curr_bw)
+
+                write_to_mm_region(conf, curr_bw, True)
+                refresh_window(conf, curr_bw, True)
+
+        if midi_port is not None:
+            midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop)
+        else:
+            keyboard_loop(conf)
 
 
 if __name__ == '__main__':
