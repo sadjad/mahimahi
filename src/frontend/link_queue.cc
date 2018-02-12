@@ -13,6 +13,7 @@
 #include "util.hh"
 #include "ezio.hh"
 #include "abstract_packet_queue.hh"
+#include "exception.hh"
 
 using namespace std;
 
@@ -21,8 +22,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
                       const bool graph_throughput, const bool graph_delay,
                       unique_ptr<AbstractPacketQueue> && packet_queue,
                       const string & command_line )
-    : fd_( 0 ),
-      control_file_( nullptr, [](uint64_t *p) { if (p) munmap(p, sizeof(uint64_t)); } ),
+    : control_file_mmap_(),
       base_timestamp_( timestamp() ),
       packet_queue_( move( packet_queue ) ),
       packet_in_transit_( "", 0 ),
@@ -35,17 +35,10 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
 {
     assert_not_root();
 
-    fd_ = open( filename.c_str(), O_RDONLY );
-    if ( fd_ == -1 ) {
-    	  throw runtime_error( "Error opening file for reading" );
-    }
-
-    void *pps = mmap( 0, 2 * sizeof(uint64_t), PROT_READ, MAP_SHARED, fd_, 0 );
-    if ( pps == MAP_FAILED ) {
-        close( fd_ );
-        throw runtime_error( "Error mmapping the file" );
-    }
-    control_file_.reset( (uint64_t *) pps );
+    FileDescriptor control_file { SystemCall( "open", open( filename.c_str(), O_RDONLY ) ) };
+    control_file_mmap_.reset( new MMap_Region( 2 * sizeof(uint64_t),
+                                               PROT_READ, MAP_SHARED,
+                                               control_file.fd_num() ) );
 
     /* open logfile if called for */
     if ( not logfile.empty() ) {
@@ -143,7 +136,7 @@ void LinkQueue::read_packet( const string & contents )
 
     record_arrival( now, contents.size());
 
-    uint64_t link_on = control_file_[1];
+    uint64_t link_on = reinterpret_cast<uint64_t *>( control_file_mmap_->addr() )[ 1 ];
     if ( link_on == 1 ) {
         packet_queue_->enqueue( QueuedPacket( contents, now ) );
     }
@@ -157,7 +150,7 @@ uint64_t LinkQueue::next_delivery_time( void ) const
         /* FIXME: this approach will have problems if the interval is
          * <1ms, such as when the rate exceeds 12Mbps_. */
         const uint64_t now = timestamp();
-        const uint64_t interval = control_file_[0];
+        const uint64_t interval = reinterpret_cast<uint64_t *>( control_file_mmap_->addr() )[ 0 ];
         if ( interval == 0 ) {
             throw runtime_error( "scheduling interval cannot be 0" );
         }

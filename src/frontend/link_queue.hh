@@ -12,14 +12,13 @@
 #include "file_descriptor.hh"
 #include "binned_livegraph.hh"
 #include "abstract_packet_queue.hh"
+#include "mmap_region.hh"
 
 class LinkQueue
 {
 private:
     const static unsigned int PACKET_SIZE = 1504; /* default max TUN payload size */
-
-    int fd_;
-    std::unique_ptr<uint64_t[], void(*)(uint64_t*)> control_file_;
+    std::unique_ptr<MMap_Region> control_file_mmap_;
 
     uint64_t base_timestamp_;
 
