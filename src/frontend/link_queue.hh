@@ -20,6 +20,7 @@ private:
     const static unsigned int PACKET_SIZE = 1504; /* default max TUN payload size */
     std::unique_ptr<MMap_Region> control_file_mmap_;
 
+    uint64_t delivered_count_; 
     uint64_t base_timestamp_;
 
     std::unique_ptr<AbstractPacketQueue> packet_queue_;

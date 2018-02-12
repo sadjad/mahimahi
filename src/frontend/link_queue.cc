@@ -23,6 +23,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
                       unique_ptr<AbstractPacketQueue> && packet_queue,
                       const string & command_line )
     : control_file_mmap_(),
+      delivered_count_( 0 ),
       base_timestamp_( timestamp() ),
       packet_queue_( move( packet_queue ) ),
       packet_in_transit_( "", 0 ),
@@ -147,12 +148,23 @@ uint64_t LinkQueue::next_delivery_time( void ) const
     if ( finished_ ) {
         return -1;
     } else {
-        /* FIXME: this approach will have problems if the interval is
-         * <1ms, such as when the rate exceeds 12Mbps_. */
         const uint64_t now = timestamp();
-        const uint64_t interval = reinterpret_cast<uint64_t *>( control_file_mmap_->addr() )[ 0 ];
+        const uint64_t bps = reinterpret_cast<uint64_t *>( control_file_mmap_->addr() )[ 0 ];
+        if ( bps == 0 ) {
+            throw runtime_error( "bps cannot be 0" );
+        }
+
+        double pps = (double) bps / ( 8 * 1500 );
+        double true_interval = 1000.0 / pps;
+
+        uint64_t interval = (uint64_t) true_interval;
+        const uint64_t remainder_100s_of_ms = (uint64_t) ((true_interval - interval) * 100);
+        if ( delivered_count_ % 100 <= remainder_100s_of_ms ) {
+            interval++;
+        }
+        /* Never allow interval to be less than 1 */
         if ( interval == 0 ) {
-            throw runtime_error( "scheduling interval cannot be 0" );
+            interval = 1;
         }
         const uint64_t scheduled_time = interval + base_timestamp_;
         return ( scheduled_time > now ) ? scheduled_time : now;
@@ -164,6 +176,7 @@ void LinkQueue::use_a_delivery_opportunity( uint64_t delivery_time )
     record_departure_opportunity();
 
     base_timestamp_ = delivery_time;
+    delivered_count_++;
 }
 
 /* emulate the link up to the given timestamp */
