@@ -1,6 +1,7 @@
 /* -*-mode:c++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 
 #include <limits>
+#include <algorithm>
 #include <cassert>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -23,6 +24,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
                       unique_ptr<AbstractPacketQueue> && packet_queue,
                       const string & command_line )
     : control_file_mmap_(),
+      random_permutation_( INTERPOLATION_SLOTS ),
       delivered_count_( 0 ),
       base_timestamp_( timestamp() ),
       packet_queue_( move( packet_queue ) ),
@@ -35,6 +37,11 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
       finished_( false )
 {
     assert_not_root();
+
+    for ( unsigned int i = 0; i < INTERPOLATION_SLOTS; i++ ) {
+        random_permutation_[i] = i;
+    }
+    random_shuffle(random_permutation_.begin(), random_permutation_.end());
 
     FileDescriptor control_file { SystemCall( "open", open( filename.c_str(), O_RDONLY ) ) };
     control_file_mmap_.reset( new MMap_Region( 2 * sizeof(uint64_t),
@@ -158,8 +165,8 @@ uint64_t LinkQueue::next_delivery_time( void ) const
         double true_interval = 1000.0 / pps;
 
         uint64_t interval = (uint64_t) true_interval;
-        const uint64_t remainder_100s_of_ms = (uint64_t) ((true_interval - interval) * 100);
-        if ( delivered_count_ % 100 <= remainder_100s_of_ms ) {
+        const uint64_t remainder_slots = (uint64_t) ((true_interval - interval) * INTERPOLATION_SLOTS);
+        if ( random_permutation_[delivered_count_ % INTERPOLATION_SLOTS] <= remainder_slots ) {
             interval++;
         }
         /* Never allow interval to be less than 1 */

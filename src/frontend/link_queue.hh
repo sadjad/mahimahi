@@ -18,9 +18,12 @@ class LinkQueue
 {
 private:
     const static unsigned int PACKET_SIZE = 1504; /* default max TUN payload size */
+    const static unsigned int INTERPOLATION_SLOTS = 100; /* Must be an multiple and >= 10 */
     std::unique_ptr<MMap_Region> control_file_mmap_;
 
-    uint64_t delivered_count_; 
+    std::vector<unsigned int> random_permutation_;
+
+    uint64_t delivered_count_;
     uint64_t base_timestamp_;
 
     std::unique_ptr<AbstractPacketQueue> packet_queue_;
