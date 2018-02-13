@@ -41,7 +41,7 @@ LinkQueue::LinkQueue( const string & link_name, const string & filename,
     for ( unsigned int i = 0; i < INTERPOLATION_SLOTS; i++ ) {
         random_permutation_[i] = i;
     }
-    random_shuffle(random_permutation_.begin(), random_permutation_.end());
+    random_shuffle( random_permutation_.begin(), random_permutation_.end() );
 
     FileDescriptor control_file { SystemCall( "open", open( filename.c_str(), O_RDONLY ) ) };
     control_file_mmap_.reset( new MMap_Region( 2 * sizeof(uint64_t),
