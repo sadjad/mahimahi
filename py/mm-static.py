@@ -24,6 +24,8 @@ def main(args):
     with open(static_file, 'wb') as f:
         f.write(struct.pack('=QQ', bps, 1))
 
+    print('Wrote static file to {}'.format(static_file))
+
 
 if __name__ == '__main__':
     main(get_args())
