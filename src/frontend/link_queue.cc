@@ -161,17 +161,13 @@ uint64_t LinkQueue::next_delivery_time( void ) const
             throw runtime_error( "bps cannot be 0" );
         }
 
-        double pps = (double) bps / ( 8 * 1500 );
-        double true_interval = 1000.0 / pps;
+        const double pps = (double) bps / ( 8 * 1500 );
+        const double true_interval = 1000.0 / pps;
 
         uint64_t interval = (uint64_t) true_interval;
         const uint64_t remainder_slots = (uint64_t) ((true_interval - interval) * INTERPOLATION_SLOTS);
         if ( random_permutation_[delivered_count_ % INTERPOLATION_SLOTS] <= remainder_slots ) {
             interval++;
-        }
-        /* Never allow interval to be less than 1 */
-        if ( interval == 0 ) {
-            interval = 1;
         }
         const uint64_t scheduled_time = interval + base_timestamp_;
         return ( scheduled_time > now ) ? scheduled_time : now;
