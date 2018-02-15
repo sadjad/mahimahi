@@ -26,7 +26,8 @@ MIDI_CTRL_SLIDER_MAX = 127
 
 
 AppConfig = namedtuple('AppConfig', ['window', 'midi_port', 'mm', 'f',
-                                     'control_file', 'max_mbps', 'min_mbps'])
+                                     'control_file', 'max_mbps', 'min_mbps',
+                                     'no_ui'])
 
 
 def get_args():
@@ -46,6 +47,8 @@ def get_args():
                         help='Min bandwidth (Mbps)')
     parser.add_argument('--max', type=float, default=DEFAULT_MAX_BW_MBPS,
                         help='Max bandwidth (Mbps)')
+    parser.add_argument('--no-ui', action='store_true',
+                        help='Disable curses UI')
     return parser.parse_args()
 
 
@@ -99,12 +102,14 @@ def write_to_mm_region(conf, mbps, link_on):
 
 def cause_temporary_outage(conf, mbps):
     write_to_mm_region(conf, mbps, False)
-    refresh_window(conf, mbps, False)
-    curses.beep()
+    if not conf.no_ui:
+        refresh_window(conf, mbps, False)
+        curses.beep()
     time.sleep(OUTAGE_LENGTH_IN_MS / 1000.0)
 
 
 def main(args):
+    no_ui = args.no_ui
     control_file = args.filename
     midi_port = args.midi_port
     midi_ctrl_bw = args.midi_ctrl_bw
@@ -121,20 +126,25 @@ def main(args):
         f.flush()
         mm = mmap.mmap(f.fileno(), mmap_len, prot=mmap.PROT_WRITE)
 
-        window = curses.initscr()
-        window.keypad(True)
-        window.clear()
-        curses.noecho()
-        curses.cbreak()
+        if not no_ui:
+            window = curses.initscr()
+            window.keypad(True)
+            window.clear()
+            curses.noecho()
+            curses.cbreak()
+        else:
+            window = None
 
         conf = AppConfig(window=window, midi_port=midi_port, mm=mm, f=f,
-                         control_file=control_file,
-                         min_mbps=min_mbps, max_mbps=max_mbps)
+                         control_file=control_file, no_ui=no_ui,
+                         max_mbps=max_mbps, min_mbps=min_mbps)
 
         write_to_mm_region(conf, curr_bw, True)
-        refresh_window(conf, curr_bw, True)
+        if not no_ui:
+            refresh_window(conf, curr_bw, True)
 
         def keyboard_loop(conf):
+            assert not conf.no_ui, 'Using keyboard input requires curses'
             nonlocal curr_bw
             while True:
                 k = window.getch()
@@ -181,7 +191,8 @@ def main(args):
                     cause_temporary_outage(conf, curr_bw)
 
                 write_to_mm_region(conf, curr_bw, True)
-                refresh_window(conf, curr_bw, True)
+                if not conf.no_ui:
+                    refresh_window(conf, curr_bw, True)
 
         if midi_port is not None:
             midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop)
