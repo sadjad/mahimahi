@@ -100,10 +100,10 @@ def write_to_mm_region(conf, mbps, link_on):
     os.fsync(conf.f.fileno())
 
 
-def cause_temporary_outage(conf, mbps):
-    write_to_mm_region(conf, mbps, False)
+def cause_temporary_outage(conf):
+    write_to_mm_region(conf, conf.min_mbps, False)
     if conf.window:
-        refresh_window(conf, mbps, False)
+        refresh_window(conf, conf.min_mbps, False)
         curses.beep()
     time.sleep(OUTAGE_LENGTH_IN_MS / 1000.0)
 
@@ -116,7 +116,7 @@ def keyboard_loop(conf):
     while True:
         k = conf.window.getch()
         if k == ord('\n') or k == curses.KEY_ENTER:
-            cause_temporary_outage(conf, curr_bw)
+            cause_temporary_outage(conf)
         elif k == curses.KEY_UP:
             curr_bw = min(curr_bw + 0.1, conf.max_mbps)
         elif k == curses.KEY_DOWN:
@@ -179,7 +179,7 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop):
             midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
                                 1, midi_ctrl_bw, 0))
 
-            cause_temporary_outage(conf, curr_bw)
+            cause_temporary_outage(conf)
 
             # Turn off the drop light
             midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
