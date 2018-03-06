@@ -14,10 +14,9 @@ from collections import namedtuple
 SIZEOF_UINT64_T = 8
 PACKET_SIZE = 1504
 
-OUTAGE_LENGTH_IN_MS = 1000
-V_STEP_LENGTH_IN_MS = 100
-
-RANDOM_LENGTH_IN_MS = 10000
+DEFAULT_OUTAGE_LENGTH_IN_MS = 1000
+DEFAULT_V_LENGTH_IN_MS = 10000
+DEFAULT_RANDOM_LENGTH_IN_MS = 10000
 RANDOM_STEP_LENGTH_IN_MS = 500
 
 # 1000 packets per second
@@ -30,6 +29,10 @@ DEFAULT_MIDI_CTRL_BW_SLIDER = 81
 DEFAULT_MIDI_CTRL_DROP_BUTTON = 73
 DEFAULT_MIDI_CTRL_V_BUTTON = 74
 DEFAULT_MIDI_CTRL_RANDOM_BUTTON = 75
+
+DEFAULT_MIDI_DROP_LENGTH_KNOB = 1
+DEFAULT_MIDI_V_LENGTH_KNOB = 2
+DEFAULT_MITI_RANDOM_LENGTH_KNOB = 3
 
 MIDI_CTRL_SLIDER_MAX = 127
 
@@ -115,12 +118,12 @@ def write_to_mm_region(conf, mbps, link_on):
     os.fsync(conf.f.fileno())
 
 
-def cause_temporary_outage(conf):
+def cause_temporary_outage(conf, outage_length=DEFAULT_OUTAGE_LENGTH_IN_MS):
     write_to_mm_region(conf, conf.min_mbps, False)
     if conf.window:
         refresh_window(conf, conf.min_mbps, False)
         curses.beep()
-    time.sleep(OUTAGE_LENGTH_IN_MS / 1000.0)
+    time.sleep(outage_length / 1000.0)
 
 
 def keyboard_loop(conf):
@@ -186,6 +189,10 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v, midi_ctrl_random)
     # Set initial slider position to maximum
     move_bw_slider(MIDI_CTRL_SLIDER_MAX)
 
+    outage_duration_in_ms = DEFAULT_OUTAGE_LENGTH_IN_MS
+    v_duration_in_ms = DEFAULT_V_LENGTH_IN_MS
+    random_duration_in_ms = DEFAULT_RANDOM_LENGTH_IN_MS
+
     while True:
         m = midiin.getMessage(250)
         if not m:
@@ -196,7 +203,17 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v, midi_ctrl_random)
             continue
 
         ctrl_no = m.getControllerNumber()
-        if ctrl_no == midi_ctrl_bw:
+
+        if ctrl_no == DEFAULT_MIDI_DROP_LENGTH_KNOB:
+            outage_duration_in_ms = m.getControllerValue() * 1000.0
+
+        elif ctrl_no == DEFAULT_MIDI_V_LENGTH_KNOB:
+            v_duration_in_ms = m.getControllerValue() * 1000.0
+
+        elif ctrl_no == DEFAULT_MITI_RANDOM_LENGTH_KNOB:
+            random_duration_in_ms = m.getControllerValue() * 1000.0
+
+        elif ctrl_no == midi_ctrl_bw:
             slider_val = m.getControllerValue()
             assert(slider_val >= 0)
             curr_bw = slider_val_to_bw(slider_val)
@@ -207,7 +224,7 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v, midi_ctrl_random)
             # Set the slider to 0
             move_bw_slider(0)
 
-            cause_temporary_outage(conf)
+            cause_temporary_outage(conf, outage_duration_in_ms)
 
             # Restore slider and deactivate light
             turn_off_button_light(midi_ctrl_drop)
@@ -215,6 +232,7 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v, midi_ctrl_random)
 
         elif ctrl_no == midi_ctrl_v:
             old_slider_val = bw_to_slider_val(curr_bw)
+            v_step_length = v_duration_in_ms / (old_slider_val * 2 - 1)
 
             # Slope down
             for i in range(1, old_slider_val + 1):
@@ -224,7 +242,7 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v, midi_ctrl_random)
                     refresh_window(conf, curr_bw, True)
                 if i % 4 == 0:
                     move_bw_slider(old_slider_val - i)
-                time.sleep(V_STEP_LENGTH_IN_MS / 1000.0)
+                time.sleep(v_step_length / 1000.0)
 
             # Slope up
             for i in range(1, old_slider_val):
@@ -234,7 +252,7 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v, midi_ctrl_random)
                     refresh_window(conf, curr_bw, True)
                 if i % 4 == 0:
                     move_bw_slider(i)
-                time.sleep(V_STEP_LENGTH_IN_MS / 1000.0)
+                time.sleep(v_step_length / 1000.0)
 
             # Turn off the v light and reset slider
             turn_off_button_light(midi_ctrl_v)
@@ -243,7 +261,7 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v, midi_ctrl_random)
 
         elif ctrl_no == midi_ctrl_random:
             old_slider_val = bw_to_slider_val(curr_bw)
-            for _ in range(0, RANDOM_LENGTH_IN_MS, RANDOM_STEP_LENGTH_IN_MS):
+            for _ in range(0, int(random_duration_in_ms), RANDOM_STEP_LENGTH_IN_MS):
                 new_slider_val = random.randint(0, MIDI_CTRL_SLIDER_MAX)
                 curr_bw = slider_val_to_bw(new_slider_val)
                 write_to_mm_region(conf, curr_bw, True)
