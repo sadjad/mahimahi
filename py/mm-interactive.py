@@ -7,12 +7,18 @@ import struct
 import curses
 import os
 import rtmidi
+import random
 from collections import namedtuple
 
 
 SIZEOF_UINT64_T = 8
 PACKET_SIZE = 1504
+
 OUTAGE_LENGTH_IN_MS = 1000
+V_STEP_LENGTH_IN_MS = 100
+
+RANDOM_LENGTH_IN_MS = 10000
+RANDOM_STEP_LENGTH_IN_MS = 500
 
 # 1000 packets per second
 DEFAULT_MAX_BW_MBPS = float(1000 * PACKET_SIZE * 8) / (10 ** 6)
@@ -22,6 +28,9 @@ DEFAULT_MIN_BW_MBPS = float(PACKET_SIZE * 8) / (10 ** 6)
 
 DEFAULT_MIDI_CTRL_BW_SLIDER = 81
 DEFAULT_MIDI_CTRL_DROP_BUTTON = 73
+DEFAULT_MIDI_CTRL_V_BUTTON = 74
+DEFAULT_MIDI_CTRL_RANDOM_BUTTON = 75
+
 MIDI_CTRL_SLIDER_MAX = 127
 
 
@@ -43,6 +52,12 @@ def get_args():
     parser.add_argument('--midi-ctrl-drop', type=int,
                         default=DEFAULT_MIDI_CTRL_DROP_BUTTON,
                         help='Midi controller number for drops')
+    parser.add_argument('--midi-ctrl-v', type=int,
+                        default=DEFAULT_MIDI_CTRL_V_BUTTON,
+                        help='Midi controller number for v-shape')
+    parser.add_argument('--midi-ctrl-random', type=int,
+                        default=DEFAULT_MIDI_CTRL_RANDOM_BUTTON,
+                        help='Midi controller number for random')
     parser.add_argument('--min', type=float, default=DEFAULT_MIN_BW_MBPS,
                         help='Min bandwidth (Mbps)')
     parser.add_argument('--max', type=float, default=DEFAULT_MAX_BW_MBPS,
@@ -130,7 +145,7 @@ def keyboard_loop(conf):
         refresh_window(conf, curr_bw, True)
 
 
-def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop):
+def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v, midi_ctrl_random):
     midiin = rtmidi.RtMidiIn()
     midiin.openPort(conf.midi_port)
 
@@ -140,17 +155,36 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop):
     slider_increment = (float(conf.max_mbps - conf.min_mbps) /
                         MIDI_CTRL_SLIDER_MAX)
 
+    def slider_val_to_bw(slider_val):
+        bw = slider_val * slider_increment + conf.min_mbps
+        bw = min(conf.max_mbps, bw)
+        bw = max(conf.min_mbps, bw)
+        return bw
+
+    def bw_to_slider_val(bw):
+        slider_val = int((bw - conf.min_mbps) / slider_increment)
+        slider_val = min(slider_val, MIDI_CTRL_SLIDER_MAX)
+        slider_val = max(slider_val, 0)
+        return slider_val
+
+    def move_bw_slider(slider_val):
+        midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
+                            1, midi_ctrl_bw, slider_val))
+
+    def turn_off_button_light(button):
+        midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
+                            1, button, 0))
     curr_bw = conf.max_mbps
     write_to_mm_region(conf, curr_bw, True)
     if conf.window:
         refresh_window(conf, curr_bw, True)
 
-    # Turn the drop light off
-    midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
-                        1, midi_ctrl_drop, 0))
+    # Turn the lights off
+    turn_off_button_light(midi_ctrl_drop)
+    turn_off_button_light(midi_ctrl_v)
+    turn_off_button_light(midi_ctrl_random)
     # Set initial slider position to maximum
-    midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
-                        1, midi_ctrl_bw, 127))
+    move_bw_slider(MIDI_CTRL_SLIDER_MAX)
 
     while True:
         m = midiin.getMessage(250)
@@ -165,28 +199,62 @@ def midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop):
         if ctrl_no == midi_ctrl_bw:
             slider_val = m.getControllerValue()
             assert(slider_val >= 0)
-            new_bw = slider_val * slider_increment + conf.min_mbps
-            new_bw = min(conf.max_mbps, new_bw)
-            new_bw = max(conf.min_mbps, new_bw)
-            curr_bw = new_bw
+            curr_bw = slider_val_to_bw(slider_val)
 
         elif ctrl_no == midi_ctrl_drop:
-            slider_val = int((curr_bw - conf.min_mbps) / slider_increment)
-            slider_val = min(slider_val, 127)
-            slider_val = max(slider_val, 0)
+            old_slider_val = bw_to_slider_val(curr_bw)
 
             # Set the slider to 0
-            midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
-                                1, midi_ctrl_bw, 0))
+            move_bw_slider(0)
 
             cause_temporary_outage(conf)
 
-            # Turn off the drop light
-            midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
-                                1, midi_ctrl_drop, 0))
-            # Set the slider back
-            midiout.sendMessage(rtmidi.MidiMessage.controllerEvent(
-                                1, midi_ctrl_bw, slider_val))
+            # Restore slider and deactivate light
+            turn_off_button_light(midi_ctrl_drop)
+            move_bw_slider(old_slider_val)
+
+        elif ctrl_no == midi_ctrl_v:
+            old_slider_val = bw_to_slider_val(curr_bw)
+
+            # Slope down
+            for i in range(1, old_slider_val + 1):
+                curr_bw = slider_val_to_bw(old_slider_val - i)
+                write_to_mm_region(conf, curr_bw, True)
+                if conf.window:
+                    refresh_window(conf, curr_bw, True)
+                if i % 4 == 0:
+                    move_bw_slider(old_slider_val - i)
+                time.sleep(V_STEP_LENGTH_IN_MS / 1000.0)
+
+            # Slope up
+            for i in range(1, old_slider_val):
+                curr_bw = slider_val_to_bw(i)
+                write_to_mm_region(conf, curr_bw, True)
+                if conf.window:
+                    refresh_window(conf, curr_bw, True)
+                if i % 4 == 0:
+                    move_bw_slider(i)
+                time.sleep(V_STEP_LENGTH_IN_MS / 1000.0)
+
+            # Turn off the v light and reset slider
+            turn_off_button_light(midi_ctrl_v)
+            curr_bw = slider_val_to_bw(old_slider_val)
+            move_bw_slider(old_slider_val)
+
+        elif ctrl_no == midi_ctrl_random:
+            old_slider_val = bw_to_slider_val(curr_bw)
+            for _ in range(0, RANDOM_LENGTH_IN_MS, RANDOM_STEP_LENGTH_IN_MS):
+                new_slider_val = random.randint(0, MIDI_CTRL_SLIDER_MAX)
+                curr_bw = slider_val_to_bw(new_slider_val)
+                write_to_mm_region(conf, curr_bw, True)
+                if conf.window:
+                    refresh_window(conf, curr_bw, True)
+                move_bw_slider(new_slider_val)
+                time.sleep(RANDOM_STEP_LENGTH_IN_MS / 1000.0)
+
+            turn_off_button_light(midi_ctrl_random)
+            curr_bw = slider_val_to_bw(old_slider_val)
+            move_bw_slider(old_slider_val)
 
         write_to_mm_region(conf, curr_bw, True)
         if conf.window:
@@ -208,6 +276,8 @@ def main(args):
     midi_port = args.midi_port
     midi_ctrl_bw = args.midi_ctrl_bw
     midi_ctrl_drop = args.midi_ctrl_drop
+    midi_ctrl_v = args.midi_ctrl_v
+    midi_ctrl_random = args.midi_ctrl_random
 
     min_mbps = args.min
     max_mbps = args.max
@@ -228,7 +298,8 @@ def main(args):
                          max_mbps=max_mbps, min_mbps=min_mbps)
 
         if midi_port is not None:
-            midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop)
+            midi_loop(conf, midi_ctrl_bw, midi_ctrl_drop, midi_ctrl_v,
+                      midi_ctrl_random)
         else:
             keyboard_loop(conf)
 
