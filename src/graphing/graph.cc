@@ -81,12 +81,12 @@ bool Graph::blocking_draw( const float t, const float logical_width,
   assert( current_weight >= 0 );
   assert( current_weight <= 1 );
 
-  /* autoscale graph -- but only lines (not filled areas) */
+  /* autoscale graph -- but only filled areas */
   float max_value = numeric_limits<float>::min();
 
   /* look at historical data points */
   for ( unsigned int i = 0; i < data_points_snapshot.size(); i++ ) {
-    if ( get<4>( styles_.at( i ) ) ) { /* skip filled areas */
+    if ( not get<4>( styles_.at( i ) ) ) { /* only filled areas */
       continue;
     }
     for ( const auto & point : data_points_snapshot.at( i ) ) {
