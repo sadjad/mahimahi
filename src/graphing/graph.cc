@@ -142,12 +142,12 @@ bool Graph::blocking_draw( const float t, const float logical_width,
 
   /* do we need to make a new label? */
   while ( x_tick_labels_.empty() or (x_tick_labels_.back().first < t + 1) ) { /* start when offscreen */
-    const int next_label = x_tick_labels_.empty() ? to_int( t ) : x_tick_labels_.back().first + 1;
+    int next_label = x_tick_labels_.empty() ? to_int( t ) : x_tick_labels_.back().first + 1;
 
     /* add commas as appropriate */
     stringstream ss;
     ss.imbue( locale( "" ) );
-    ss << fixed << next_label;
+    ss << fixed << ( next_label % 10 );
 
     x_tick_labels_.emplace_back( next_label, Pango::Text( cairo_, pango_, tick_font_, ss.str() ) );
   }
