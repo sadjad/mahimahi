@@ -24,11 +24,11 @@ Graph::GraphicContext & Graph::current_gc( void )
 }
 
 Graph::Graph( const unsigned int initial_width, const unsigned int initial_height,
-	      const string & title,
-	      const float min_y, const float max_y,
-	      const StylesType & styles,
-	      const string & x_label,
-	      const string & y_label )
+              const string & title,
+              const float min_y, const float max_y,
+              const StylesType & styles,
+              const string & x_label,
+              const string & y_label )
   : window_( initial_width, initial_height ),
     gcs_( { window_, window_, window_ } ),
     current_gc_( 0 ),
@@ -64,12 +64,12 @@ static int to_int( const float x )
 }
 
 bool Graph::blocking_draw( const float t, const float logical_width,
-			   const vector<float> & current_values, const double current_weight )
+           const vector<float> & current_values, const double current_weight )
 {
   unique_lock<mutex> ul { data_mutex_ }; /* going to read and write data_points_ */
   for ( auto & line : data_points_ ) {
     while ( (line.size() >= 2) and (line.front().first < t - logical_width - 1)
-	    and (line.at( 1 ).first < t - logical_width - 1) ) {
+            and (line.at( 1 ).first < t - logical_width - 1) ) {
       line.pop_front();
     }
   }
@@ -91,14 +91,14 @@ bool Graph::blocking_draw( const float t, const float logical_width,
     }
     for ( const auto & point : data_points_snapshot.at( i ) ) {
       if ( point.second > max_value ) {
-	max_value = point.second;
+        max_value = point.second;
       }
     }
 
     /* look at current/provisional data points? */
     if ( current_weight > 0.4 ) {
       if ( current_values.at( i ) > max_value ) {
-	max_value = current_values.at( i );
+        max_value = current_values.at( i );
       }
     }
   }
@@ -158,9 +158,9 @@ bool Graph::blocking_draw( const float t, const float logical_width,
     const double x_position = window_size.first - (t - x.first) * window_size.first / logical_width;
 
     x.second.draw_centered_at( cairo_,
-			       x_position,
-			       window_size.second * 9.0 / 10.0,
-			       0.85 * window_size.first / logical_width );
+               x_position,
+               window_size.second * 9.0 / 10.0,
+               0.85 * window_size.first / logical_width );
 
     cairo_set_source_rgba( cairo_, 0, 0, 0.4, 1 );
     cairo_fill( cairo_ );
@@ -188,39 +188,39 @@ bool Graph::blocking_draw( const float t, const float logical_width,
     }
 
     cairo_set_source_rgba( cairo_,
-			   get<0>( styles_.at( line_no ) ),
-			   get<1>( styles_.at( line_no ) ),
-			   get<2>( styles_.at( line_no ) ),
-			   get<3>( styles_.at( line_no ) ) );
+           get<0>( styles_.at( line_no ) ),
+           get<1>( styles_.at( line_no ) ),
+           get<2>( styles_.at( line_no ) ),
+           get<3>( styles_.at( line_no ) ) );
 
     bool pen_down = false;
     pair<float, float> last_point;
 
     for ( unsigned int i = 0; i < line.size(); i++ ) {
       if ( pen_down ) {
-	if ( line[ i ].second >= 0 ) {
-	  add_segment( t, line[ i ].first, line[ i ].second, logical_width );
-	  last_point = line[ i ];
-	} else {
-	  end_line( t, last_point.first, logical_width, get<4>( styles_.at( line_no ) ) );
-	  pen_down = false;
-	}
+        if ( line[ i ].second >= 0 ) {
+          add_segment( t, line[ i ].first, line[ i ].second, logical_width );
+          last_point = line[ i ];
+        } else {
+          end_line( t, last_point.first, logical_width, get<4>( styles_.at( line_no ) ) );
+          pen_down = false;
+        }
       } else if ( line[ i ].second >= 0 ) {
-	begin_line( t, line[ i ].first, line[ i ].second, logical_width );
-	last_point = line[ i ];
-	pen_down = true;
+        begin_line( t, line[ i ].first, line[ i ].second, logical_width );
+        last_point = line[ i ];
+        pen_down = true;
       }
     }
 
     if ( pen_down ) {
       if ( (line.back().second >= 0) and (current_values.at( line_no ) >= 0) ) {
-	add_segment( t, t,
-		     current_weight * current_values.at( line_no ) + (1 - current_weight) * line.back().second,
-		     logical_width );
-	end_line( t, line.front().first,
-		  logical_width, get<4>( styles_.at( line_no ) ) );
+        add_segment( t, t,
+             current_weight * current_values.at( line_no ) + (1 - current_weight) * line.back().second,
+             logical_width );
+        end_line( t, line.front().first,
+          logical_width, get<4>( styles_.at( line_no ) ) );
       } else {
-	end_line( t, line.front().first, logical_width, get<4>( styles_.at( line_no ) ) );
+        end_line( t, line.front().first, logical_width, get<4>( styles_.at( line_no ) ) );
       }
     }
   }
@@ -243,12 +243,12 @@ bool Graph::blocking_draw( const float t, const float logical_width,
     auto it = y_tick_labels_.begin();
     while ( it < y_tick_labels_.end() ) {
       if ( it->intensity < 0.01 ) {
-	/* delete it */
-	auto it_next = it + 1;
-	y_tick_labels_.erase( it );
-	it = it_next;
+        /* delete it */
+        auto it_next = it + 1;
+        y_tick_labels_.erase( it );
+        it = it_next;
       } else {
-	it++;
+        it++;
       }
     }
   }
@@ -269,10 +269,10 @@ bool Graph::blocking_draw( const float t, const float logical_width,
     bool belongs = false;
     for ( auto & y : labels_that_belong ) {
       if ( it->height == y.first ) {
-	assert( y.second == false ); /* don't want duplicates */
-	y.second = true;
-	belongs = true;
-	break;
+        assert( y.second == false ); /* don't want duplicates */
+        y.second = true;
+        belongs = true;
+        break;
       }
     }
 
@@ -367,7 +367,7 @@ void Graph::end_line( const float t, const float x, const float logical_width, c
     /* fill the curve */
     cairo_line_to( cairo_, window_size.first, chart_height( 0, window_size.second ) );
     cairo_line_to( cairo_, window_size.first - (t - x) * window_size.first / logical_width,
-		   chart_height( 0, window_size.second ) );
+           chart_height( 0, window_size.second ) );
     cairo_fill( cairo_ );
   } else {
     cairo_stroke( cairo_ );
